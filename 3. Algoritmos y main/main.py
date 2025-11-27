@@ -21,11 +21,12 @@ def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def run_all_models(dataset_file, text_col, label_col, base_image_dir):
-    """Ejecuta todos los modelos y genera una comparativa."""
-    results = []
+    """Ejecuta todos los modelos y genera una comparativa, con capacidad de reanudación."""
     comparison_dir = os.path.join(base_image_dir, "COMPARATIVA_FINAL")
     if not os.path.exists(comparison_dir):
         os.makedirs(comparison_dir)
+    
+    csv_path = os.path.join(comparison_dir, "resultados_comparativos.csv")
 
     # Definición de tareas
     tasks = [
@@ -43,10 +44,47 @@ def run_all_models(dataset_file, text_col, label_col, base_image_dir):
         ('LightGBM', lambda: run_classical('LightGBM', dataset_file, text_col, label_col, output_image_dir=os.path.join(base_image_dir, "LightGBM"))),
     ]
 
+    results = []
+    executed_models = set()
+
+    # Verificar si existe un archivo de resultados previo para reanudar
+    if os.path.exists(csv_path):
+        try:
+            df_existing = pd.read_csv(csv_path)
+            if not df_existing.empty and 'Modelo' in df_existing.columns:
+                executed_models = set(df_existing['Modelo'].tolist())
+                print(f"\n⚠️ Se encontró una ejecución previa con {len(executed_models)} modelos procesados.")
+                print(f"Modelos completados: {', '.join(executed_models)}")
+                
+                if len(executed_models) < len(tasks):
+                    resp = input("¿Desea continuar desde donde se quedó? (s/n): ").lower().strip()
+                    if resp == 's':
+                        results = df_existing.to_dict('records')
+                        print("🔄 Reanudando ejecución...")
+                    else:
+                        print("🔄 Reiniciando ejecución desde cero...")
+                        executed_models = set()
+                else:
+                    print("✅ Todos los modelos parecen haber sido ejecutados anteriormente.")
+                    resp = input("¿Desea volver a ejecutarlos todos? (s/n): ").lower().strip()
+                    if resp != 's':
+                        print("Mostrando resultados existentes...")
+                        results = df_existing.to_dict('records')
+                        # Saltar al final para graficar
+                        executed_models = set(t[0] for t in tasks) 
+                    else:
+                        executed_models = set()
+        except Exception as e:
+            print(f"⚠️ Error leyendo archivo previo: {e}. Se iniciará desde cero.")
+
     print("\n🚀 INICIANDO EJECUCIÓN MASIVA DE TODOS LOS MODELOS...")
     print("Esto puede tomar bastante tiempo. Por favor espere.\n")
 
     for name, func in tasks:
+        if name in executed_models:
+            print(f"⏩ Saltando {name} (ya procesado).")
+            continue
+
         print(f"\n>>> Ejecutando {name}...")
         start_time = time.time()
         try:
@@ -54,17 +92,26 @@ def run_all_models(dataset_file, text_col, label_col, base_image_dir):
             elapsed_time = time.time() - start_time
             results.append({'Modelo': name, 'Accuracy': acc, 'Tiempo (s)': elapsed_time})
             print(f"✅ {name} finalizado. Acc: {acc:.4f}, Tiempo: {elapsed_time:.2f}s")
+            
+            # Guardado incremental para seguridad
+            pd.DataFrame(results).to_csv(csv_path, index=False)
+            
         except Exception as e:
             print(f"❌ Error en {name}: {e}")
             results.append({'Modelo': name, 'Accuracy': 0.0, 'Tiempo (s)': 0.0})
+            pd.DataFrame(results).to_csv(csv_path, index=False)
 
     # Generar DataFrame y Gráficos
+    if not results:
+        print("No hay resultados para mostrar.")
+        return
+
     df_res = pd.DataFrame(results)
     print("\n--- RESULTADOS FINALES ---")
     print(df_res)
     
-    # Guardar CSV
-    df_res.to_csv(os.path.join(comparison_dir, "resultados_comparativos.csv"), index=False)
+    # Guardar CSV Final
+    df_res.to_csv(csv_path, index=False)
 
     # Gráfico de Accuracy
     plt.figure(figsize=(12, 6))
@@ -89,8 +136,8 @@ def main_menu():
     # ==========================================
     # CONFIGURACIÓN GLOBAL
     # ==========================================
-    DATASET_FILE = '../1. Detector_cyberbullying/cyberbullying_tweets_processed.csv'
-    TEXT_COLUMN = 'tweet_text_clean'
+    DATASET_FILE = '../Dataset/tweets_trad.csv'
+    TEXT_COLUMN = 'texto_traducido'
     LABEL_COLUMN = 'cyberbullying_type'
     BASE_IMAGE_DIR = "./images"
     
